@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Автозакрытие вкладок</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <div class="app">
+      <!-- Экран первого запуска и редактирования настроек -->
+      <section id="view-onboarding" class="view" hidden aria-labelledby="onboarding-title">
+        <header class="brand">
+          <img class="brand-logo" src="icons/icon48.png" alt="" width="38" height="38" />
+          <div class="brand-text">
+            <h1 id="onboarding-title">Автозакрытие вкладок</h1>
+            <p class="subtitle">Порядок в браузере без лишних кликов</p>
+          </div>
+        </header>
+
+        <p class="lead">
+          Выберите, сколько времени вкладка может оставаться без внимания. Расширение
+          ничего не закрывает само — только когда вы нажмёте кнопку.
+        </p>
+
+        <div class="form-card">
+          <div class="field">
+            <span class="field-label">Считать вкладку неактивной, если её не открывали дольше</span>
+            <div class="presets" id="presets" role="group" aria-label="Быстрый выбор порога"></div>
+            <div class="custom-row">
+              <span class="custom-label" id="custom-label">Своё значение</span>
+              <input
+                id="custom-value"
+                class="number-input"
+                type="number"
+                inputmode="numeric"
+                min="1"
+                step="1"
+                value="60"
+                aria-labelledby="custom-label"
+              />
+              <select id="custom-unit" class="unit-select" aria-label="Единица измерения">
+                <option value="minutes">минут</option>
+                <option value="hours">часов</option>
+                <option value="days">дней</option>
+              </select>
+            </div>
+            <p class="hint" id="threshold-preview"></p>
+          </div>
+
+          <label class="checkbox-row">
+            <input type="checkbox" id="keep-pinned" />
+            <span class="checkbox-text">
+              <span class="checkbox-title">Не закрывать закреплённые вкладки</span>
+              <span class="checkbox-note">Рекомендуем оставить включённым</span>
+            </span>
+          </label>
+
+          <p class="form-error" id="settings-error" role="alert" hidden></p>
+
+          <div class="form-actions">
+            <button type="button" id="save-settings" class="btn btn-primary btn-block">
+              Начать
+            </button>
+            <button type="button" id="cancel-settings" class="btn btn-ghost btn-block" hidden>
+              Отмена
+            </button>
+          </div>
+        </div>
+
+        <p class="footnote">
+          Настройки хранятся локально в браузере. Расширение не отправляет данные в интернет.
+        </p>
+      </section>
+
+      <!-- Основной экран со списком вкладок -->
+      <section id="view-main" class="view" hidden aria-labelledby="main-title">
+        <header class="topbar">
+          <div class="brand">
+            <img class="brand-logo brand-logo-sm" src="icons/icon48.png" alt="" width="32" height="32" />
+            <div class="brand-text">
+              <h1 id="main-title">Автозакрытие вкладок</h1>
+              <p class="subtitle" id="threshold-caption"></p>
+            </div>
+          </div>
+          <div class="topbar-actions">
+            <button type="button" class="icon-btn" id="refresh" title="Обновить список" aria-label="Обновить список">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M21 12a9 9 0 1 1-2.64-6.36" />
+                <path d="M21 3v6h-6" />
+              </svg>
+            </button>
+            <button type="button" class="icon-btn" id="open-settings" title="Изменить порог" aria-label="Изменить порог">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M4 21v-7" />
+                <path d="M4 10V3" />
+                <path d="M12 21v-9" />
+                <path d="M12 8V3" />
+                <path d="M20 21v-5" />
+                <path d="M20 12V3" />
+                <path d="M1 14h6" />
+                <path d="M9 8h6" />
+                <path d="M17 16h6" />
+              </svg>
+            </button>
+          </div>
+        </header>
+
+        <div id="status-card" class="status-card"></div>
+
+        <div class="list-header">
+          <span class="list-title">Открытые вкладки</span>
+          <span class="count-pill" id="tabs-count">0</span>
+        </div>
+        <div class="tabs-list" id="tabs-list" role="list"></div>
+
+        <p class="footnote footnote-main">
+          Вкладки закрываются только по нажатию кнопки. Автоматического закрытия нет.
+        </p>
+      </section>
+    </div>
+
+    <div id="toast" class="toast" role="status" aria-live="polite"></div>
+    <script type="module" src="popup.js"></script>
+  </body>
+</html>
