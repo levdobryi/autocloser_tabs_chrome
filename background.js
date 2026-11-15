@@ -3,16 +3,19 @@
  * Его задачи:
  *  1) запоминать время последней активности вкладок (запасной вариант, если браузер
  *     не отдаёт tab.lastAccessed);
- *  2) показывать на иконке расширения количество вкладок, которые давно не открывали.
- *
- * Важно: worker НИКОГДА не закрывает вкладки. Это делает только пользователь кнопкой в попапе.
+ *  2) показывать на иконке расширения количество вкладок, которые давно не открывали;
+ *  3) если пользователь включил в настройках автозакрытие — раз в минуту закрывать
+ *     «забытые» вкладки. Пока тумблер выключен, worker вкладки не трогает.
  */
 
 import {
   ACTIVITY_KEY,
   DEFAULT_SETTINGS,
+  LAST_AUTO_CLOSE_KEY,
   SETTINGS_KEY,
   getStaleTabs,
+  normalizeSettings,
+  selectAutoCloseTabs,
 } from "./shared.js";
 
 const BADGE_REFRESH_ALARM = "badge-refresh";
@@ -22,11 +25,13 @@ const UPDATE_DELAY_MS = 350;
 let badgeTimer = null;
 /** Очередь, чтобы параллельные события не перезаписывали журнал активности. */
 let activityQueue = Promise.resolve();
+/** Защита от повторного запуска автозакрытия, пока предыдущее не закончилось. */
+let autoCloseRunning = false;
 
 async function readSettings() {
   try {
     const stored = await chrome.storage.local.get(SETTINGS_KEY);
-    return { ...DEFAULT_SETTINGS, ...(stored[SETTINGS_KEY] || {}) };
+    return normalizeSettings(stored[SETTINGS_KEY]);
   } catch {
     return { ...DEFAULT_SETTINGS };
   }
@@ -39,6 +44,26 @@ async function readActivity() {
   } catch {
     return {};
   }
+}
+
+/**
+ * Добавляет к вкладкам время последней активности: сначала берём данные браузера,
+ * затем — журнал из chrome.storage.session.
+ * @param {chrome.tabs.Tab[]} tabs
+ * @param {Record<string, number>} activity
+ */
+function resolveTabs(tabs, activity) {
+  return tabs
+    .filter((tab) => Number.isInteger(tab.id))
+    .map((tab) => ({
+      ...tab,
+      lastAccessed:
+        typeof tab.lastAccessed === "number"
+          ? tab.lastAccessed
+          : typeof activity[tab.id] === "number"
+            ? activity[tab.id]
+            : null,
+    }));
 }
 
 /** Запоминает, что вкладка только что была активна. */
@@ -74,6 +99,48 @@ function scheduleBadgeUpdate() {
   }, UPDATE_DELAY_MS);
 }
 
+/**
+ * Закрывает «забытые» вкладки, если автозакрытие включено в настройках.
+ * Возвращает количество успешно закрытых вкладок.
+ */
+async function autoCloseStaleTabs() {
+  if (autoCloseRunning) return 0;
+
+  const settings = await readSettings();
+  if (!settings.autoClose) return 0;
+
+  autoCloseRunning = true;
+  try {
+    const [activity, tabs] = await Promise.all([readActivity(), chrome.tabs.query({})]);
+    const resolved = resolveTabs(tabs, activity);
+    const targets = selectAutoCloseTabs(resolved, settings.thresholdMs, {
+      now: Date.now(),
+      keepPinned: settings.keepPinned,
+    });
+
+    if (targets.length === 0) return 0;
+
+    const results = await Promise.allSettled(
+      targets.map((tab) => chrome.tabs.remove(tab.id)),
+    );
+    const closed = results.filter((result) => result.status === "fulfilled").length;
+
+    if (closed > 0) {
+      try {
+        await chrome.storage.local.set({
+          [LAST_AUTO_CLOSE_KEY]: { at: Date.now(), count: closed },
+        });
+      } catch {
+        // Журнал автозакрытия нужен только для подсказки в попапе — не критичен.
+      }
+    }
+
+    return closed;
+  } finally {
+    autoCloseRunning = false;
+  }
+}
+
 /** Пересчитывает «забытые» вкладки и обновляет счётчик на иконке. */
 async function updateBadge() {
   const [settings, activity, tabs] = await Promise.all([
@@ -83,22 +150,15 @@ async function updateBadge() {
   ]);
 
   const now = Date.now();
-  const resolved = tabs
-    .filter((tab) => Number.isInteger(tab.id))
-    .map((tab) => ({
-      ...tab,
-      lastAccessed:
-        typeof tab.lastAccessed === "number"
-          ? tab.lastAccessed
-          : typeof activity[tab.id] === "number"
-            ? activity[tab.id]
-            : null,
-    }));
+  const resolved = resolveTabs(tabs, activity);
 
+  // Для счётчика достаточно обычной проверки: он лишь показывает, что есть
+  // вкладки без внимания, и ничего не закрывает.
   const stale = getStaleTabs(resolved, settings.thresholdMs, {
     now,
     keepPinned: settings.keepPinned,
   });
+
   const count = stale.length;
   const text = count === 0 ? "" : count > 99 ? "99+" : String(count);
 
@@ -168,12 +228,15 @@ chrome.tabs.onReplaced.addListener((addedTabId, removedTabId) => {
 
 chrome.storage.onChanged.addListener((changes, areaName) => {
   if (areaName === "local" && changes[SETTINGS_KEY]) {
+    // Если тумблер только что включили, будильник должен точно существовать.
+    ensureAlarm();
     scheduleBadgeUpdate();
   }
 });
 
 chrome.alarms.onAlarm.addListener((alarm) => {
-  if (alarm.name === BADGE_REFRESH_ALARM) {
-    scheduleBadgeUpdate();
-  }
+  if (alarm.name !== BADGE_REFRESH_ALARM) return;
+  autoCloseStaleTabs()
+    .catch(() => {})
+    .finally(() => scheduleBadgeUpdate());
 });

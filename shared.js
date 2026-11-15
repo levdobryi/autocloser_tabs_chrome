@@ -10,11 +10,20 @@ export const DAY = 24 * HOUR;
 /** Ключи в chrome.storage.local / chrome.storage.session. */
 export const SETTINGS_KEY = "settings";
 export const ACTIVITY_KEY = "activity";
+export const LAST_AUTO_CLOSE_KEY = "lastAutoClose";
 
-/** Настройки по умолчанию: вкладка считается забытой после часа без внимания. */
+/** Допустимые границы порога, чтобы настройки нельзя было сломать вручную. */
+export const MIN_THRESHOLD_MS = MINUTE;
+export const MAX_THRESHOLD_MS = 365 * DAY;
+
+/**
+ * Настройки по умолчанию: вкладка считается забытой после часа без внимания,
+ * автозакрытие выключено — расширение ничего не делает без ведома пользователя.
+ */
 export const DEFAULT_SETTINGS = Object.freeze({
   thresholdMs: HOUR,
   keepPinned: true,
+  autoClose: false,
 });
 
 /** Готовые варианты порога для экрана первого запуска. */
@@ -144,6 +153,67 @@ export function getStaleTabs(tabs, thresholdMs, options = {}) {
   if (!Array.isArray(tabs)) return [];
   const now = options.now ?? Date.now();
   return tabs.filter((tab) => isStale(tab, thresholdMs, { ...options, now }));
+}
+
+/**
+ * Приводит настройки из хранилища к безопасному виду.
+ * Старые версии расширения не знают про autoClose — считаем его выключенным.
+ * @param {Partial<typeof DEFAULT_SETTINGS> | null | undefined} saved
+ */
+export function normalizeSettings(saved) {
+  const source = saved && typeof saved === "object" ? saved : {};
+  const raw = Number.isFinite(source.thresholdMs)
+    ? source.thresholdMs
+    : DEFAULT_SETTINGS.thresholdMs;
+  const thresholdMs = Math.min(
+    MAX_THRESHOLD_MS,
+    Math.max(MIN_THRESHOLD_MS, Math.round(raw)),
+  );
+  return {
+    thresholdMs,
+    keepPinned: source.keepPinned !== false,
+    autoClose: source.autoClose === true,
+  };
+}
+
+/**
+ * Отбирает вкладки для автоматического закрытия. К автоматике предъявляются
+ * более строгие требования, чем к ручному закрытию:
+ *  - не трогаем активную вкладку в каждом окне;
+ *  - не трогаем вкладки, которые издают звук (музыка, видео, звонки);
+ *  - не трогаем последнюю вкладку окна, иначе закроется само окно;
+ *  - не трогаем вкладки без известного времени последней активности;
+ *  - закреплённые защищены, если включена настройка keepPinned.
+ * @param {Array<{
+ *   id?: number,
+ *   windowId?: number,
+ *   active?: boolean,
+ *   audible?: boolean,
+ *   pinned?: boolean,
+ *   lastAccessed?: number | null
+ * }>} tabs
+ * @param {number} thresholdMs
+ * @param {{ now?: number, keepPinned?: boolean }} [options]
+ */
+export function selectAutoCloseTabs(tabs, thresholdMs, options = {}) {
+  if (!Array.isArray(tabs)) return [];
+  const { now = Date.now(), keepPinned = true } = options;
+
+  const tabsPerWindow = new Map();
+  for (const tab of tabs) {
+    if (!tab || !Number.isInteger(tab.windowId)) continue;
+    tabsPerWindow.set(tab.windowId, (tabsPerWindow.get(tab.windowId) ?? 0) + 1);
+  }
+
+  return tabs.filter((tab) => {
+    if (!tab || !Number.isInteger(tab.id)) return false;
+    if (tab.active === true) return false;
+    if (tab.audible === true) return false;
+    if (Number.isInteger(tab.windowId) && (tabsPerWindow.get(tab.windowId) ?? 0) <= 1) {
+      return false;
+    }
+    return isStale(tab, thresholdMs, { now, keepPinned });
+  });
 }
 
 /**

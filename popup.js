@@ -1,18 +1,20 @@
 import {
   ACTIVITY_KEY,
   DEFAULT_SETTINGS,
+  LAST_AUTO_CLOSE_KEY,
+  MAX_THRESHOLD_MS,
+  MIN_THRESHOLD_MS,
   PRESETS,
   SETTINGS_KEY,
   formatDuration,
   formatRelative,
   getStaleTabs,
   hostFromUrl,
+  normalizeSettings,
   plural,
   splitDuration,
 } from "./shared.js";
 
-const MIN_THRESHOLD_MS = 60_000;
-const MAX_THRESHOLD_MS = 365 * 86_400_000;
 const UNIT_MS = { minutes: 60_000, hours: 3_600_000, days: 86_400_000 };
 
 /** Статичные SVG-иконки для динамически создаваемых элементов. */
@@ -34,6 +36,7 @@ const state = {
   loading: true,
   closing: false,
   error: null,
+  lastAutoClose: null,
   toastTimer: null,
 };
 
@@ -47,15 +50,20 @@ const ui = {
   customUnit: $("custom-unit"),
   preview: $("threshold-preview"),
   keepPinned: $("keep-pinned"),
+  autoClose: $("auto-close"),
+  autoCloseNote: $("auto-close-note"),
   settingsError: $("settings-error"),
   saveSettings: $("save-settings"),
   cancelSettings: $("cancel-settings"),
   thresholdCaption: $("threshold-caption"),
+  autoBanner: $("auto-banner"),
+  autoBannerText: $("auto-banner-text"),
   statusCard: $("status-card"),
   refresh: $("refresh"),
   openSettings: $("open-settings"),
   tabsList: $("tabs-list"),
   tabsCount: $("tabs-count"),
+  mainFootnote: $("main-footnote"),
   toast: $("toast"),
 };
 
@@ -85,12 +93,6 @@ async function init() {
     showOnboarding();
     showToast("Не удалось прочитать настройки");
   }
-}
-
-function normalizeSettings(saved) {
-  const raw = Number.isFinite(saved.thresholdMs) ? saved.thresholdMs : DEFAULT_SETTINGS.thresholdMs;
-  const thresholdMs = Math.min(MAX_THRESHOLD_MS, Math.max(MIN_THRESHOLD_MS, Math.round(raw)));
-  return { thresholdMs, keepPinned: saved.keepPinned !== false };
 }
 
 function buildPresets() {
@@ -131,6 +133,8 @@ function bindEvents() {
     input.addEventListener("change", onFormChanged);
   }
 
+  ui.autoClose.addEventListener("change", updateAutoCloseNote);
+
   ui.statusCard.addEventListener("click", (event) => {
     const trigger = event.target.closest("[data-action]");
     if (!trigger) return;
@@ -146,6 +150,15 @@ function onFormChanged() {
   clearSettingsError();
   syncPresetSelection();
   updatePreview();
+}
+
+/** Подсказка под тумблером автозакрытия. */
+function updateAutoCloseNote() {
+  const enabled = ui.autoClose.checked;
+  ui.autoCloseNote.textContent = enabled
+    ? "Включено — забытые вкладки закроются сами, проверка раз в минуту"
+    : "Выключено — вкладки закрываются только по кнопке";
+  ui.autoClose.closest(".switch-row")?.classList.toggle("is-on", enabled);
 }
 
 function readThreshold() {
@@ -186,6 +199,8 @@ function applySettingsToForm(settings) {
   ui.customValue.value = String(value);
   ui.customUnit.value = unit;
   ui.keepPinned.checked = settings.keepPinned !== false;
+  ui.autoClose.checked = settings.autoClose === true;
+  updateAutoCloseNote();
   clearSettingsError();
   syncPresetSelection();
   updatePreview();
@@ -214,6 +229,7 @@ function showMain() {
   ui.onboarding.hidden = true;
   ui.main.hidden = false;
   renderThresholdCaption();
+  renderAutoBanner();
   refreshTabs();
 }
 
@@ -226,7 +242,11 @@ async function handleSave() {
     return;
   }
 
-  const settings = { thresholdMs: ms, keepPinned: ui.keepPinned.checked };
+  const settings = {
+    thresholdMs: ms,
+    keepPinned: ui.keepPinned.checked,
+    autoClose: ui.autoClose.checked,
+  };
   ui.saveSettings.disabled = true;
   ui.saveSettings.textContent = "Сохраняем…";
 
@@ -245,7 +265,31 @@ async function handleSave() {
 
 function renderThresholdCaption() {
   if (!state.settings) return;
-  ui.thresholdCaption.textContent = `Неактивны дольше ${formatDuration(state.settings.thresholdMs)}`;
+  const suffix = state.settings.autoClose ? " · автозакрытие включено" : "";
+  ui.thresholdCaption.textContent = `Неактивны дольше ${formatDuration(
+    state.settings.thresholdMs,
+  )}${suffix}`;
+}
+
+/** Плашка о включённом автозакрытии и последнем срабатывании. */
+function renderAutoBanner() {
+  const enabled = state.settings?.autoClose === true;
+  ui.autoBanner.hidden = !enabled;
+  ui.mainFootnote.textContent = enabled
+    ? "Автозакрытие включено: раз в минуту забытые вкладки закрываются сами. Активные, звучащие и последнюю вкладку окна не трогаем."
+    : "Вкладки закрываются только по нажатию кнопки. Автоматического закрытия нет.";
+
+  if (!enabled) return;
+
+  const parts = ["Проверяем раз в минуту"];
+  const last = state.lastAutoClose;
+  if (last && last.count > 0) {
+    const words = plural(last.count, ["вкладка", "вкладки", "вкладок"]);
+    parts.push(
+      `последнее срабатывание ${formatRelative(Date.now() - last.at)}: закрыто ${last.count} ${words}`,
+    );
+  }
+  ui.autoBannerText.textContent = parts.join(" · ");
 }
 
 async function readActivityLog() {
@@ -254,6 +298,18 @@ async function readActivityLog() {
     return stored?.[ACTIVITY_KEY] ?? {};
   } catch {
     return {};
+  }
+}
+
+/** Последнее срабатывание автозакрытия — для подсказки в попапе. */
+async function readLastAutoClose() {
+  try {
+    const stored = await chrome.storage.local.get(LAST_AUTO_CLOSE_KEY);
+    const value = stored?.[LAST_AUTO_CLOSE_KEY];
+    if (!value || !Number.isFinite(value.at) || !Number.isFinite(value.count)) return null;
+    return { at: value.at, count: Math.max(0, Math.round(value.count)) };
+  } catch {
+    return null;
   }
 }
 
@@ -267,8 +323,13 @@ async function refreshTabs() {
   renderCount();
 
   try {
-    const [tabs, activity] = await Promise.all([chrome.tabs.query({}), readActivityLog()]);
+    const [tabs, activity, lastAutoClose] = await Promise.all([
+      chrome.tabs.query({}),
+      readActivityLog(),
+      readLastAutoClose(),
+    ]);
     if (token !== refreshToken) return;
+    state.lastAutoClose = lastAutoClose;
 
     const now = Date.now();
     const resolved = tabs
@@ -302,6 +363,7 @@ async function refreshTabs() {
       state.loading = false;
       ui.refresh.classList.remove("is-spinning");
       renderThresholdCaption();
+      renderAutoBanner();
       renderStatusCard();
       renderList();
       renderCount();
@@ -367,7 +429,13 @@ function renderStatusCard() {
     button.disabled = state.closing;
     card.append(button);
     card.append(
-      el("p", "status-hint", "Закроются только после нажатия. Автоматически ничего не удаляется."),
+      el(
+        "p",
+        "status-hint",
+        state.settings?.autoClose
+          ? "Автозакрытие включено: через минуту они закроются сами, кроме активной, звучащей и последней вкладки окна."
+          : "Закроются только после нажатия. Автоматически ничего не удаляется.",
+      ),
     );
     return;
   }

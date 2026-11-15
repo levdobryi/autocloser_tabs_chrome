@@ -336,6 +336,103 @@ select:focus-visible {
   color: var(--muted);
 }
 
+/* ---------- Ползунок автозакрытия ---------- */
+
+.switch-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 11px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface-2);
+  cursor: pointer;
+  transition: border-color 0.16s ease, background 0.16s ease;
+}
+
+.switch-row:hover {
+  border-color: #c9cde0;
+}
+
+.switch-row.is-on {
+  border-color: rgba(91, 91, 214, 0.4);
+  background: var(--accent-soft);
+}
+
+.switch-text {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.switch-title {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.switch-note {
+  font-size: 10.5px;
+  color: var(--muted);
+  line-height: 1.35;
+}
+
+.switch {
+  position: relative;
+  width: 40px;
+  height: 22px;
+  flex: 0 0 auto;
+}
+
+.switch input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  opacity: 0;
+  cursor: pointer;
+  z-index: 1;
+}
+
+.switch-track {
+  position: absolute;
+  inset: 0;
+  border-radius: 999px;
+  background: #cdd2e4;
+  transition: background 0.16s ease;
+}
+
+.switch-thumb {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #ffffff;
+  box-shadow: 0 1px 3px rgba(16, 24, 40, 0.3);
+  transition: transform 0.16s ease;
+}
+
+.switch input:checked + .switch-track {
+  background: linear-gradient(135deg, #6366f1, #4f46e5);
+}
+
+.switch input:checked + .switch-track .switch-thumb {
+  transform: translateX(18px);
+}
+
+.switch input:focus-visible {
+  outline: none;
+}
+
+.switch input:focus-visible + .switch-track {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
 .form-error {
   margin: 0;
   padding: 8px 10px;
@@ -417,6 +514,39 @@ select:focus-visible {
 
 .footnote-main {
   padding: 0 6px;
+}
+
+/* ---------- Плашка автозакрытия ---------- */
+
+.auto-banner {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 9px 11px;
+  border: 1px solid rgba(91, 91, 214, 0.28);
+  border-radius: 11px;
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+  font-size: 10.5px;
+  line-height: 1.4;
+  animation: view-in 0.22s ease both;
+}
+
+.auto-banner-icon {
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  margin-top: 1px;
+}
+
+.auto-banner-icon svg {
+  width: 14px;
+  height: 14px;
+  display: block;
+}
+
+.auto-banner-text {
+  min-width: 0;
 }
 
 /* ---------- Карточка статуса ---------- */
@@ -897,5 +1027,17 @@ select:focus-visible {
   .unit-select:hover,
   .tabs-list::-webkit-scrollbar-thumb:hover {
     border-color: #3b4254;
+  }
+
+  .switch-track {
+    background: #3b4254;
+  }
+
+  .switch-row:hover {
+    border-color: #3b4254;
+  }
+
+  .switch-row.is-on {
+    border-color: rgba(139, 140, 248, 0.42);
   }
 }
